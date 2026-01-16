@@ -295,7 +295,7 @@ jobs:
           path: '*.AppImage'
 
   release:
-    needs: [build-deb, build-rpm, build-appimage]
+    needs: [build-deb, build-rpm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
