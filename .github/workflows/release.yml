@@ -204,26 +204,34 @@ jobs:
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
 
-          # Download Python AppImage as base
-          wget -q https://github.com/niess/python-appimage/releases/download/python3.11/python3.11.9-cp311-cp311-manylinux2014_x86_64.AppImage
-          chmod +x python3.11.9-cp311-cp311-manylinux2014_x86_64.AppImage
+      - name: Install Python and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-venv python3-dev python3-pip python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1
+          python3 -m pip install --upgrade pip setuptools wheel
 
       - name: Build AppImage
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
 
-          # Extract Python AppImage
-          ./python3.11.9-cp311-cp311-manylinux2014_x86_64.AppImage --appimage-extract
-          mv squashfs-root DDCUtil-GTK.AppDir
+          # Create AppDir structure (AppImage standard layout)
+          mkdir -p DDCUtil-GTK.AppDir/usr/bin
+          mkdir -p DDCUtil-GTK.AppDir/usr/lib
+          mkdir -p DDCUtil-GTK.AppDir/usr/share/applications
+          mkdir -p DDCUtil-GTK.AppDir/usr/share/icons/hicolor/scalable/apps
 
-          # Install PyGObject into the AppImage
-          ./DDCUtil-GTK.AppDir/AppRun -m pip install --no-cache-dir PyGObject
+          # Create Python virtual environment in AppDir
+          # We'll use system Python but bundle it in the AppImage
+          python3 -m venv DDCUtil-GTK.AppDir/usr/python
+          
+          # Install PyGObject - it should work with system GTK4 via GI_TYPELIB_PATH
+          DDCUtil-GTK.AppDir/usr/python/bin/pip install --no-cache-dir PyGObject
 
           # Copy our application
-          cp -r src/ddcutil_gtk DDCUtil-GTK.AppDir/opt/python3.11/lib/python3.11/site-packages/
+          cp -r src/ddcutil_gtk DDCUtil-GTK.AppDir/usr/python/lib/python*/site-packages/
 
           # Create desktop file
-          cat > DDCUtil-GTK.AppDir/org.ddcutil.gtk.desktop << EOF
+          cat > DDCUtil-GTK.AppDir/usr/share/applications/org.ddcutil.gtk.desktop << EOF
           [Desktop Entry]
           Name=DDCUtil Monitor Control
           Comment=Control monitor settings via DDC/CI
@@ -237,7 +245,7 @@ jobs:
           EOF
 
           # Create icon (use a generic display icon as SVG)
-          cat > DDCUtil-GTK.AppDir/ddcutil-gtk.svg << 'EOF'
+          cat > DDCUtil-GTK.AppDir/usr/share/icons/hicolor/scalable/apps/ddcutil-gtk.svg << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
             <rect x="20" y="40" width="216" height="140" rx="8" fill="#3584e4" stroke="#1c71d8" stroke-width="4"/>
@@ -260,18 +268,21 @@ jobs:
           export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib64:${LD_LIBRARY_PATH}"
 
           # Set up Python environment
-          export PATH="${HERE}/opt/python3.11/bin:${PATH}"
-          export PYTHONHOME="${HERE}/opt/python3.11"
-          export PYTHONPATH="${HERE}/opt/python3.11/lib/python3.11/site-packages:${PYTHONPATH}"
+          export PATH="${HERE}/usr/python/bin:${PATH}"
+          export PYTHONHOME="${HERE}/usr/python"
+          # Find the actual Python version in the venv
+          PYTHON_VER=$(ls -d "${HERE}/usr/python/lib/python"* | head -1 | sed 's/.*python//')
+          export PYTHONPATH="${HERE}/usr/python/lib/python${PYTHON_VER}/site-packages:${PYTHONPATH}"
 
           # Run the application
-          exec "${HERE}/opt/python3.11/bin/python3.11" -c "from ddcutil_gtk.main import main; main()" "$@"
+          exec "${HERE}/usr/python/bin/python3" -c "from ddcutil_gtk.main import main; main()" "$@"
           EOF
           chmod +x DDCUtil-GTK.AppDir/AppRun
 
           # Link desktop file and icon to AppDir root
-          ln -sf org.ddcutil.gtk.desktop DDCUtil-GTK.AppDir/
-          ln -sf ddcutil-gtk.svg DDCUtil-GTK.AppDir/.DirIcon
+          ln -sf usr/share/applications/org.ddcutil.gtk.desktop DDCUtil-GTK.AppDir/
+          ln -sf usr/share/icons/hicolor/scalable/apps/ddcutil-gtk.svg DDCUtil-GTK.AppDir/.DirIcon
+          ln -sf usr/share/icons/hicolor/scalable/apps/ddcutil-gtk.svg DDCUtil-GTK.AppDir/ddcutil-gtk.svg
 
           # Build AppImage
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --no-appstream DDCUtil-GTK.AppDir
