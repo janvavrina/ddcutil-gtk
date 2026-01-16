@@ -312,12 +312,6 @@ jobs:
           name: rpm-package
           path: dist/
 
-      - name: Download AppImage artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: appimage-package
-          path: dist/
-
       - name: Get version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -332,4 +326,3 @@ jobs:
           files: |
             dist/*.deb
             dist/*.rpm
-            dist/*.AppImage
