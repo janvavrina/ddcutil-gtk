@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=DDCUtil Monitor Control
+Comment=Control monitor settings via DDC/CI
+Exec=ddcutil-gtk
+Icon=video-display-symbolic
+Terminal=false
+Type=Application
+Categories=Settings;HardwareSettings;
+Keywords=monitor;display;brightness;contrast;ddc;
+StartupNotify=true

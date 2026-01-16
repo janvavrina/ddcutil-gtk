@@ -1,0 +1,324 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev debhelper dh-python python3-all python3-setuptools
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build Debian package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          PKG_NAME="ddcutil-gtk"
+          PKG_DIR="${PKG_NAME}_${VERSION}"
+
+          # Create package directory structure
+          mkdir -p "${PKG_DIR}/DEBIAN"
+          mkdir -p "${PKG_DIR}/usr/lib/python3/dist-packages"
+          mkdir -p "${PKG_DIR}/usr/bin"
+          mkdir -p "${PKG_DIR}/usr/share/applications"
+          mkdir -p "${PKG_DIR}/usr/share/polkit-1/actions"
+
+          # Copy Python package
+          cp -r src/ddcutil_gtk "${PKG_DIR}/usr/lib/python3/dist-packages/"
+
+          # Create executable wrapper
+          cat > "${PKG_DIR}/usr/bin/ddcutil-gtk" << 'EOF'
+          #!/usr/bin/env python3
+          from ddcutil_gtk.main import main
+          if __name__ == '__main__':
+              main()
+          EOF
+          chmod +x "${PKG_DIR}/usr/bin/ddcutil-gtk"
+
+          # Copy desktop file and polkit policy
+          cp data/org.ddcutil.gtk.desktop "${PKG_DIR}/usr/share/applications/"
+          cp data/org.ddcutil.gtk.policy "${PKG_DIR}/usr/share/polkit-1/actions/"
+
+          # Create control file
+          cat > "${PKG_DIR}/DEBIAN/control" << EOF
+          Package: ddcutil-gtk
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: all
+          Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, ddcutil (>= 2.0)
+          Maintainer: DDCUtil GTK Contributors <noreply@github.com>
+          Description: GTK4 GUI for ddcutil monitor control
+           A modern GTK4 + libadwaita GUI for controlling monitor settings
+           via DDC/CI using ddcutil. Features include brightness, contrast,
+           input source selection, volume control, and color adjustments.
+          Homepage: https://github.com/ddcutil-gtk/ddcutil-gtk
+          EOF
+
+          # Build the package
+          dpkg-deb --build "${PKG_DIR}"
+          mv "${PKG_DIR}.deb" "ddcutil-gtk_${VERSION}_all.deb"
+
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: '*.deb'
+
+  build-rpm:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          dnf install -y rpm-build python3-devel python3-setuptools
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build RPM package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+
+          # Create rpmbuild directories
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+          # Create tarball
+          tar czf ~/rpmbuild/SOURCES/ddcutil-gtk-${VERSION}.tar.gz \
+            --transform "s,^,ddcutil-gtk-${VERSION}/," \
+            src/ data/ pyproject.toml README.md
+
+          # Create spec file
+          cat > ~/rpmbuild/SPECS/ddcutil-gtk.spec << EOF
+          Name:           ddcutil-gtk
+          Version:        ${VERSION}
+          Release:        1%{?dist}
+          Summary:        GTK4 GUI for ddcutil monitor control
+
+          License:        GPL-3.0-or-later
+          URL:            https://github.com/ddcutil-gtk/ddcutil-gtk
+          Source0:        %{name}-%{version}.tar.gz
+
+          BuildArch:      noarch
+          BuildRequires:  python3-devel
+          BuildRequires:  python3-setuptools
+
+          Requires:       python3 >= 3.10
+          Requires:       python3-gobject
+          Requires:       gtk4
+          Requires:       libadwaita
+          Requires:       ddcutil >= 2.0
+
+          %description
+          A modern GTK4 + libadwaita GUI for controlling monitor settings
+          via DDC/CI using ddcutil. Features include brightness, contrast,
+          input source selection, volume control, and color adjustments.
+
+          %prep
+          %autosetup
+
+          %build
+          # Nothing to build for pure Python
+
+          %install
+          mkdir -p %{buildroot}%{python3_sitelib}/ddcutil_gtk
+          cp -r src/ddcutil_gtk/* %{buildroot}%{python3_sitelib}/ddcutil_gtk/
+
+          mkdir -p %{buildroot}%{_bindir}
+          cat > %{buildroot}%{_bindir}/ddcutil-gtk << 'SCRIPT'
+          #!/usr/bin/env python3
+          from ddcutil_gtk.main import main
+          if __name__ == '__main__':
+              main()
+          SCRIPT
+          chmod +x %{buildroot}%{_bindir}/ddcutil-gtk
+
+          mkdir -p %{buildroot}%{_datadir}/applications
+          cp data/org.ddcutil.gtk.desktop %{buildroot}%{_datadir}/applications/
+
+          mkdir -p %{buildroot}%{_datadir}/polkit-1/actions
+          cp data/org.ddcutil.gtk.policy %{buildroot}%{_datadir}/polkit-1/actions/
+
+          %files
+          %license README.md
+          %{python3_sitelib}/ddcutil_gtk/
+          %{_bindir}/ddcutil-gtk
+          %{_datadir}/applications/org.ddcutil.gtk.desktop
+          %{_datadir}/polkit-1/actions/org.ddcutil.gtk.policy
+
+          %changelog
+          * $(date '+%a %b %d %Y') DDCUtil GTK Contributors <noreply@github.com> - ${VERSION}-1
+          - Release ${VERSION}
+          EOF
+
+          # Build the RPM
+          rpmbuild -bb ~/rpmbuild/SPECS/ddcutil-gtk.spec
+
+          # Copy to workspace
+          cp ~/rpmbuild/RPMS/noarch/*.rpm .
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package
+          path: '*.rpm'
+
+  build-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip python3-venv fuse libfuse2 file
+
+      - name: Download AppImage tools
+        run: |
+          # Download appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Download Python AppImage as base
+          wget -q https://github.com/niess/python-appimage/releases/download/python3.11/python3.11.9-cp311-cp311-manylinux2014_x86_64.AppImage
+          chmod +x python3.11.9-cp311-cp311-manylinux2014_x86_64.AppImage
+
+      - name: Build AppImage
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+
+          # Extract Python AppImage
+          ./python3.11.9-cp311-cp311-manylinux2014_x86_64.AppImage --appimage-extract
+          mv squashfs-root DDCUtil-GTK.AppDir
+
+          # Install PyGObject into the AppImage
+          ./DDCUtil-GTK.AppDir/AppRun -m pip install --no-cache-dir PyGObject
+
+          # Copy our application
+          cp -r src/ddcutil_gtk DDCUtil-GTK.AppDir/opt/python3.11/lib/python3.11/site-packages/
+
+          # Create desktop file
+          cat > DDCUtil-GTK.AppDir/org.ddcutil.gtk.desktop << EOF
+          [Desktop Entry]
+          Name=DDCUtil Monitor Control
+          Comment=Control monitor settings via DDC/CI
+          Exec=ddcutil-gtk
+          Icon=ddcutil-gtk
+          Terminal=false
+          Type=Application
+          Categories=Settings;HardwareSettings;
+          Keywords=monitor;display;brightness;contrast;ddc;
+          StartupNotify=true
+          EOF
+
+          # Create icon (use a generic display icon as SVG)
+          cat > DDCUtil-GTK.AppDir/ddcutil-gtk.svg << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="40" width="216" height="140" rx="8" fill="#3584e4" stroke="#1c71d8" stroke-width="4"/>
+            <rect x="32" y="52" width="192" height="116" rx="4" fill="#1e1e1e"/>
+            <rect x="100" y="180" width="56" height="20" fill="#5e5c64"/>
+            <rect x="70" y="200" width="116" height="12" rx="4" fill="#5e5c64"/>
+            <circle cx="128" cy="110" r="30" fill="none" stroke="#3584e4" stroke-width="6"/>
+            <path d="M128 85 L128 75 M128 145 L128 135 M103 110 L93 110 M163 110 L153 110" stroke="#3584e4" stroke-width="4" stroke-linecap="round"/>
+          </svg>
+          EOF
+
+          # Create AppRun script
+          cat > DDCUtil-GTK.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+
+          # Use system GTK4 and libadwaita (required)
+          export GI_TYPELIB_PATH="/usr/lib/x86_64-linux-gnu/girepository-1.0:/usr/lib64/girepository-1.0:${GI_TYPELIB_PATH}"
+          export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib64:${LD_LIBRARY_PATH}"
+
+          # Set up Python environment
+          export PATH="${HERE}/opt/python3.11/bin:${PATH}"
+          export PYTHONHOME="${HERE}/opt/python3.11"
+          export PYTHONPATH="${HERE}/opt/python3.11/lib/python3.11/site-packages:${PYTHONPATH}"
+
+          # Run the application
+          exec "${HERE}/opt/python3.11/bin/python3.11" -c "from ddcutil_gtk.main import main; main()" "$@"
+          EOF
+          chmod +x DDCUtil-GTK.AppDir/AppRun
+
+          # Link desktop file and icon to AppDir root
+          ln -sf org.ddcutil.gtk.desktop DDCUtil-GTK.AppDir/
+          ln -sf ddcutil-gtk.svg DDCUtil-GTK.AppDir/.DirIcon
+
+          # Build AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --no-appstream DDCUtil-GTK.AppDir
+          mv DDCUtil_GTK*.AppImage "DDCUtil-GTK-${VERSION}-x86_64.AppImage"
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-package
+          path: '*.AppImage'
+
+  release:
+    needs: [build-deb, build-rpm, build-appimage]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download DEB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-package
+          path: dist/
+
+      - name: Download RPM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-package
+          path: dist/
+
+      - name: Download AppImage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: appimage-package
+          path: dist/
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: DDCUtil GTK v${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage

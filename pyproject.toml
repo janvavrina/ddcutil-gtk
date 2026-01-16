@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ddcutil-gtk"
+version = "0.1.0"
+description = "GTK4 GUI for ddcutil monitor control"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+requires-python = ">=3.10"
+authors = [
+    {name = "DDCUtil GTK Contributors"}
+]
+keywords = ["ddcutil", "gtk", "monitor", "brightness", "ddc"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Desktop Environment :: Gnome",
+]
+dependencies = [
+    "PyGObject>=3.42.0",
+]
+
+[project.scripts]
+ddcutil-gtk = "ddcutil_gtk.main:main"
+
+[project.urls]
+Homepage = "https://github.com/ddcutil-gtk/ddcutil-gtk"
+
+[tool.setuptools.packages.find]
+where = ["src"]
