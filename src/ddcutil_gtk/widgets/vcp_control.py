@@ -9,7 +9,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gtk
 
 
 class VCPSlider(Adw.ActionRow):
@@ -28,8 +28,10 @@ class VCPSlider(Adw.ActionRow):
         self.feature_code = feature_code
         self._maximum = maximum
         self._on_change = on_change
-        self._debounce_id: int | None = None
         self._updating = False
+        self._is_loading = False
+        self._is_dragging = False
+        self._value_before_drag: int | None = None
 
         self.set_title(title)
 
@@ -50,44 +52,61 @@ class VCPSlider(Adw.ActionRow):
         self._value_label.add_css_class("numeric")
         self._update_label(current)
 
-        # Box to hold slider and label
+        # Loading spinner (hidden by default)
+        self._spinner = Gtk.Spinner()
+        self._spinner.set_size_request(16, 16)
+        self._spinner.set_visible(False)
+
+        # Box to hold slider, label, and spinner
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         box.set_valign(Gtk.Align.CENTER)
         box.append(self._scale)
         box.append(self._value_label)
+        box.append(self._spinner)
 
         self.add_suffix(box)
 
-        # Connect signal with debouncing
+        # Connect value-changed to update label in real-time
         self._scale.connect("value-changed", self._on_value_changed)
+
+        # Use click gesture to detect press/release for applying values
+        click_gesture = Gtk.GestureClick()
+        click_gesture.connect("pressed", self._on_press)
+        click_gesture.connect("stopped", self._on_release)
+        click_gesture.connect("cancel", self._on_release)
+        self._scale.add_controller(click_gesture)
 
     def _update_label(self, value: int) -> None:
         """Update the value label."""
         self._value_label.set_text(f"{value}/{self._maximum}")
 
     def _on_value_changed(self, scale: Gtk.Scale) -> None:
-        """Handle slider value change with debouncing."""
+        """Handle slider value change - only update label, don't apply yet."""
         if self._updating:
             return
 
         value = int(scale.get_value())
         self._update_label(value)
 
-        # Cancel previous debounce
-        if self._debounce_id is not None:
-            GLib.source_remove(self._debounce_id)
+    def _on_press(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
+        """Called when user presses on the slider."""
+        self._is_dragging = True
+        self._value_before_drag = int(self._scale.get_value())
 
-        # Debounce: wait 150ms before applying
-        self._debounce_id = GLib.timeout_add(
-            150, self._apply_value, value
-        )
+    def _on_release(self, gesture: Gtk.GestureClick, *args) -> None:
+        """Called when gesture ends (release or cancel) - apply the value."""
+        if not self._is_dragging:
+            return
 
-    def _apply_value(self, value: int) -> bool:
-        """Apply the value after debounce delay."""
-        self._debounce_id = None
-        if self._on_change:
+        self._is_dragging = False
+        value = int(self._scale.get_value())
+
+        # Only apply if value actually changed
+        if self._on_change and value != self._value_before_drag:
+            self.set_loading(True)
             self._on_change(self.feature_code, value)
-        return False  # Don't repeat
+
+        self._value_before_drag = None
 
     def set_value(self, value: int, maximum: int | None = None) -> None:
         """Set the slider value programmatically."""
@@ -102,6 +121,16 @@ class VCPSlider(Adw.ActionRow):
     def set_sensitive_state(self, sensitive: bool) -> None:
         """Set whether the control is sensitive."""
         self._scale.set_sensitive(sensitive)
+
+    def set_loading(self, loading: bool) -> None:
+        """Set loading state - shows spinner and disables control."""
+        self._is_loading = loading
+        self._scale.set_sensitive(not loading)
+        self._spinner.set_visible(loading)
+        if loading:
+            self._spinner.start()
+        else:
+            self._spinner.stop()
 
 
 class VCPCombo(Adw.ComboRow):
@@ -121,8 +150,15 @@ class VCPCombo(Adw.ComboRow):
         self._on_change = on_change
         self._options = options  # List of (value, name) tuples
         self._updating = False
+        self._is_loading = False
 
         self.set_title(title)
+
+        # Loading spinner (hidden by default)
+        self._spinner = Gtk.Spinner()
+        self._spinner.set_size_request(16, 16)
+        self._spinner.set_visible(False)
+        self.add_suffix(self._spinner)
 
         # Create string list for options
         string_list = Gtk.StringList()
@@ -176,3 +212,13 @@ class VCPCombo(Adw.ComboRow):
 
         self._set_selection_by_value(current)
         self._updating = False
+
+    def set_loading(self, loading: bool) -> None:
+        """Set loading state - shows spinner and disables control."""
+        self._is_loading = loading
+        self.set_sensitive(not loading)
+        self._spinner.set_visible(loading)
+        if loading:
+            self._spinner.start()
+        else:
+            self._spinner.stop()

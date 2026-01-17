@@ -163,6 +163,12 @@ class MonitorPanel(Gtk.ScrolledWindow):
             else:
                 control.set_sensitive(not loading)
 
+    def set_control_loading(self, feature_code: int, loading: bool) -> None:
+        """Set loading state for a specific control."""
+        control = self._controls.get(feature_code)
+        if control:
+            control.set_loading(loading)
+
     def refresh_controls(self) -> None:
         """Refresh control values from monitor cache."""
         for code, control in self._controls.items():

@@ -313,12 +313,21 @@ class MainWindow(Adw.ApplicationWindow):
         if not self._ddcutil:
             return
 
+        # Show loading state on the control
+        panel = self._panels.get(display)
+        if panel:
+            panel.set_control_loading(feature_code, True)
+
         try:
             success = await self._ddcutil.set_vcp(display, feature_code, value)
             if not success:
                 self._show_toast("Failed to set value")
         except DDCUtilError as e:
             self._show_toast(f"Error: {e}")
+        finally:
+            # Clear loading state
+            if panel:
+                panel.set_control_loading(feature_code, False)
 
     def _show_toast(self, message: str) -> None:
         """Show a toast notification."""
